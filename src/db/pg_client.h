@@ -6,9 +6,6 @@
 #include <optional>
 #include <cstdint>
 
-/**
- * Row-level structures returned from PostgreSQL queries.
- */
 struct PartitionRow {
     int64_t  partition_id;
     int64_t  table_id;
@@ -41,16 +38,8 @@ struct SnapshotRow {
     std::string committed_at;
 };
 
-/**
- * Thin wrapper around libpq for executing parameterized queries.
- *
- * Each method takes a raw PGconn* (borrowed from ConnectionPool).
- * The caller is responsible for connection lifetime management.
- */
 class PgClient {
 public:
-    // ── Table operations ────────────────────────────
-
     bool create_table(PGconn* conn, const std::string& table_name,
                       const std::string& schema_json,
                       const std::string& partition_spec,
@@ -71,7 +60,6 @@ public:
     std::vector<TableRow> list_tables(PGconn* conn, const std::string& ns,
                                       int32_t page_size, const std::string& page_token);
 
-    // ── Partition operations ────────────────────────
 
     std::optional<std::vector<PartitionRow>> query_partitions(
         PGconn* conn, const std::string& table_name, uint64_t snapshot_id);
@@ -87,7 +75,6 @@ public:
                                 const std::string& partition_key,
                                 uint64_t deleted_snapshot_id);
 
-    // ── Snapshot operations ─────────────────────────
 
     uint64_t insert_snapshot(PGconn* conn, const std::string& table_name,
                              uint64_t parent_snapshot_id,
@@ -105,7 +92,6 @@ public:
     bool update_table_snapshot(PGconn* conn, const std::string& table_name,
                                uint64_t snapshot_id);
 
-    // ── Transaction operations ──────────────────────
 
     uint64_t insert_transaction(PGconn* conn, const std::string& client_id,
                                 uint64_t read_snapshot_id,
@@ -114,7 +100,6 @@ public:
     bool update_transaction_status(PGconn* conn, uint64_t txn_id,
                                    const std::string& status);
 
-    // ── Utility ─────────────────────────────────────
 
     int64_t get_table_id(PGconn* conn, const std::string& table_name);
 

@@ -1,10 +1,3 @@
--- IceLog: Metadata Control Plane — PostgreSQL Schema
--- Run this on first boot to bootstrap all required tables and indexes.
-
--- ══════════════════════════════════════════════════
--- TABLE CATALOG
--- ══════════════════════════════════════════════════
-
 CREATE TABLE IF NOT EXISTS tables (
     table_id            BIGSERIAL PRIMARY KEY,
     table_name          TEXT UNIQUE NOT NULL,
@@ -18,7 +11,6 @@ CREATE TABLE IF NOT EXISTS tables (
     is_deleted          BOOLEAN DEFAULT false
 );
 
--- Schema evolution history — every ALTER TABLE is recorded
 CREATE TABLE IF NOT EXISTS schema_history (
     schema_history_id BIGSERIAL PRIMARY KEY,
     table_id          BIGINT REFERENCES tables(table_id),
@@ -27,10 +19,6 @@ CREATE TABLE IF NOT EXISTS schema_history (
     changed_at        TIMESTAMPTZ DEFAULT now(),
     change_summary    TEXT
 );
-
--- ══════════════════════════════════════════════════
--- SNAPSHOT MANAGEMENT
--- ══════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS snapshots (
     snapshot_id         BIGSERIAL PRIMARY KEY,
@@ -46,10 +34,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX idx_snapshots_table_time
     ON snapshots(table_id, committed_at DESC);
 
--- ══════════════════════════════════════════════════
--- PARTITION REGISTRY
--- ══════════════════════════════════════════════════
-
 CREATE TABLE IF NOT EXISTS partitions (
     partition_id        BIGSERIAL PRIMARY KEY,
     table_id            BIGINT REFERENCES tables(table_id),
@@ -64,19 +48,13 @@ CREATE TABLE IF NOT EXISTS partitions (
     deleted_snapshot_id BIGINT
 );
 
--- Critical index for sub-10ms lookups — partial index skips soft-deleted rows
 CREATE INDEX idx_partitions_table_snapshot
     ON partitions(table_id, snapshot_id)
     WHERE is_deleted = false;
 
--- Index for partition pruning by key
 CREATE INDEX idx_partitions_table_key
     ON partitions(table_id, partition_key)
     WHERE is_deleted = false;
-
--- ══════════════════════════════════════════════════
--- TRANSACTION TRACKING
--- ══════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS transactions (
     txn_id            BIGSERIAL PRIMARY KEY,

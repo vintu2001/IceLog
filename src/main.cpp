@@ -18,9 +18,6 @@ void signal_handler(int signum) {
     }
 }
 
-/**
- * Background thread that periodically cleans up expired transactions.
- */
 void cleanup_loop(MVCCManager& mvcc, std::chrono::seconds interval) {
     while (running.load()) {
         std::this_thread::sleep_for(interval);
@@ -33,30 +30,23 @@ void cleanup_loop(MVCCManager& mvcc, std::chrono::seconds interval) {
 }
 
 int main(int argc, char* argv[]) {
-    // Register signal handlers for graceful shutdown
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Load configuration from environment / defaults
     auto config = ServerConfig::from_env();
 
-    std::cout << "╔══════════════════════════════════════════╗\n";
-    std::cout << "║   IceLog — Metadata Control Plane        ║\n";
-    std::cout << "╠══════════════════════════════════════════╣\n";
-    std::cout << "║  gRPC address : " << config.grpc_address << "\n";
-    std::cout << "║  PG pool size : " << config.pool_size << "\n";
-    std::cout << "║  Cache cap    : " << config.cache_capacity << "\n";
-    std::cout << "║  Txn timeout  : " << config.txn_timeout_s << "s\n";
-    std::cout << "╚══════════════════════════════════════════╝\n";
+    std::cout << "[IceLog] Metadata Control Plane\n";
+    std::cout << "  gRPC address : " << config.grpc_address << "\n";
+    std::cout << "  PG pool size : " << config.pool_size << "\n";
+    std::cout << "  Cache cap    : " << config.cache_capacity << "\n";
+    std::cout << "  Txn timeout  : " << config.txn_timeout_s << "s\n";
 
-    // Initialize the gRPC service
     MetadataServer service(config);
 
     grpc::ServerBuilder builder;
     builder.AddListeningPort(config.grpc_address, grpc::InsecureServerCredentials());
     builder.RegisterService(&service);
 
-    // Tune gRPC thread pool for high concurrency
     builder.SetSyncServerOption(grpc::ServerBuilder::SyncServerOption::NUM_CQS, 4);
     builder.SetSyncServerOption(grpc::ServerBuilder::SyncServerOption::MIN_POLLERS, 2);
     builder.SetSyncServerOption(grpc::ServerBuilder::SyncServerOption::MAX_POLLERS, 8);
@@ -68,11 +58,6 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[main] server listening on " << config.grpc_address << "\n";
-
-    // Start background cleanup thread
-    // (In production, this would also report metrics to Prometheus)
-    // Note: We'd need to pass the MVCCManager from MetadataServer;
-    // for now this is a placeholder showing the architecture.
 
     grpc_server->Wait();
 

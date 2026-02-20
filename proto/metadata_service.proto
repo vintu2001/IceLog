@@ -2,29 +2,24 @@ syntax = "proto3";
 package metadata;
 
 service MetadataService {
-    // Table operations
     rpc CreateTable(CreateTableRequest) returns (OperationResponse);
     rpc GetTableMetadata(TableRequest) returns (TableMetadataResponse);
     rpc AlterTable(AlterTableRequest) returns (OperationResponse);
     rpc DropTable(DropTableRequest) returns (OperationResponse);
     rpc ListTables(ListTablesRequest) returns (ListTablesResponse);
 
-    // Partition operations
     rpc GetPartitions(PartitionRequest) returns (PartitionListResponse);
     rpc GetPartitionStats(PartitionStatsRequest) returns (PartitionStatsResponse);
 
-    // Snapshot / commit operations
     rpc CommitSnapshot(SnapshotRequest) returns (SnapshotResponse);
     rpc GetSnapshot(GetSnapshotRequest) returns (SnapshotDetail);
     rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
 
-    // Transaction operations
     rpc BeginTransaction(TransactionRequest) returns (TransactionResponse);
     rpc CommitTransaction(CommitRequest) returns (OperationResponse);
     rpc AbortTransaction(AbortRequest) returns (OperationResponse);
 }
 
-// ── Table Messages ──────────────────────────────────────
 
 message CreateTableRequest {
     string table_name = 1;
@@ -35,7 +30,7 @@ message CreateTableRequest {
 
 message TableRequest {
     string table_name = 1;
-    uint64 snapshot_id = 2;  // 0 = latest committed snapshot
+    uint64 snapshot_id = 2;
 }
 
 message TableMetadataResponse {
@@ -84,7 +79,6 @@ message TableSummary {
     int64 total_partitions = 3;
 }
 
-// ── Partition Messages ──────────────────────────────────
 
 message PartitionInfo {
     string partition_key = 1;
@@ -121,14 +115,13 @@ message PartitionStatsResponse {
     int64 avg_partition_size_bytes = 4;
 }
 
-// ── Snapshot Messages ───────────────────────────────────
 
 message SnapshotRequest {
     string table_name = 1;
     repeated PartitionInfo new_partitions = 2;
     repeated string deleted_partition_keys = 3;
     uint64 parent_snapshot_id = 4;
-    string operation = 5;  // "append", "overwrite", "delete"
+    string operation = 5;
 }
 
 message SnapshotResponse {
@@ -160,7 +153,6 @@ message ListSnapshotsResponse {
     repeated SnapshotDetail snapshots = 1;
 }
 
-// ── Transaction Messages ────────────────────────────────
 
 message TransactionRequest {
     string client_id = 1;
@@ -185,7 +177,6 @@ message AbortRequest {
     uint64 txn_id = 1;
 }
 
-// ── Common ──────────────────────────────────────────────
 
 message OperationResponse {
     bool success = 1;

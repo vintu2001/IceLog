@@ -7,7 +7,6 @@ PartitionRegistry::PartitionRegistry(ConnectionPool& pool, PgClient& pg,
     : pool_(pool), pg_(pg), locks_(locks), mvcc_(mvcc),
       cache_(cache_capacity) {}
 
-// ── Get Partitions (with LRU cache) ─────────────────────
 
 std::optional<std::vector<PartitionRow>> PartitionRegistry::get_partitions(
     const std::string& table_name,
@@ -15,25 +14,21 @@ std::optional<std::vector<PartitionRow>> PartitionRegistry::get_partitions(
 {
     auto guard = locks_.scoped_shared(table_name);
 
-    // Resolve "latest" if snapshot_id == 0
     uint64_t read_snap = (snapshot_id == 0)
         ? mvcc_.get_latest_committed_snapshot()
         : snapshot_id;
 
-    // L1: check the in-process cache (microsecond latency)
     std::string key = make_cache_key(table_name, read_snap);
     if (auto cached = cache_.get(key)) {
         return cached;
     }
 
-    // L2: cache miss — query PostgreSQL (single-digit ms with partial index)
     auto conn = pool_.acquire();
     auto result = pg_.query_partitions(conn.get(), table_name, read_snap);
     if (!result.has_value()) {
         return std::nullopt;
     }
 
-    // Populate cache for future requests
     cache_.put(key, *result);
     return result;
 }
@@ -50,13 +45,11 @@ std::optional<std::vector<PartitionRow>> PartitionRegistry::get_partitions_paged
         ? mvcc_.get_latest_committed_snapshot()
         : snapshot_id;
 
-    // Paginated queries bypass the cache (too many permutations to cache)
     auto conn = pool_.acquire();
     return pg_.query_partitions_paged(conn.get(), table_name, read_snap,
                                       page_size, last_partition_id);
 }
 
-// ── Partition Stats ─────────────────────────────────────
 
 PartitionRegistry::PartitionStats PartitionRegistry::get_stats(
     const std::string& table_name)
@@ -81,7 +74,6 @@ PartitionRegistry::PartitionStats PartitionRegistry::get_stats(
     return stats;
 }
 
-// ── Commit Snapshot ─────────────────────────────────────
 
 PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
     const std::string& table_name,
@@ -90,12 +82,10 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
     const std::vector<PartitionRow>& new_partitions,
     const std::vector<std::string>& deleted_partition_keys)
 {
-    // Exclusive lock — blocks all readers and other writers on this table
     auto guard = locks_.scoped_exclusive(table_name);
 
     auto conn = pool_.acquire();
 
-    // 1. Optimistic concurrency check
     uint64_t current_snap = pg_.get_current_snapshot(conn.get(), table_name);
     if (!mvcc_.validate_parent_snapshot(table_name, parent_snapshot_id, current_snap)) {
         return {
@@ -105,10 +95,8 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
         };
     }
 
-    // 2. Begin atomic PostgreSQL transaction
     PQexec(conn.get(), "BEGIN");
 
-    // 3. Insert new snapshot record
     uint64_t new_snap = pg_.insert_snapshot(
         conn.get(), table_name, parent_snapshot_id, operation,
         static_cast<int32_t>(new_partitions.size()),
@@ -119,7 +107,6 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
         return {false, 0, "Failed to insert snapshot record"};
     }
 
-    // 4. Insert new partition records
     for (const auto& part : new_partitions) {
         if (!pg_.insert_partition(conn.get(), table_name, new_snap, part)) {
             PQexec(conn.get(), "ROLLBACK");
@@ -127,7 +114,6 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
         }
     }
 
-    // 5. Mark deleted partitions (for overwrite/delete operations)
     for (const auto& key : deleted_partition_keys) {
         if (!pg_.mark_partition_deleted(conn.get(), table_name, key, new_snap)) {
             PQexec(conn.get(), "ROLLBACK");
@@ -135,16 +121,13 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
         }
     }
 
-    // 6. Advance the table's current_snapshot_id
     if (!pg_.update_table_snapshot(conn.get(), table_name, new_snap)) {
         PQexec(conn.get(), "ROLLBACK");
         return {false, 0, "Failed to update table snapshot pointer"};
     }
 
-    // 7. Commit the PostgreSQL transaction
     PQexec(conn.get(), "COMMIT");
 
-    // 8. Invalidate stale cache entries for this table
     invalidate_table_cache(table_name);
 
     std::cout << "[PartitionRegistry] committed snapshot " << new_snap
@@ -154,7 +137,6 @@ PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
     return {true, new_snap, ""};
 }
 
-// ── Cache Invalidation ──────────────────────────────────
 
 void PartitionRegistry::invalidate_table_cache(const std::string& table_name) {
     std::string prefix = table_name + ":";

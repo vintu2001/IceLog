@@ -8,13 +8,6 @@
 #include <chrono>
 #include <stdexcept>
 
-/**
- * Fixed-size PostgreSQL connection pool using libpq.
- *
- * Connections are pre-established at construction time.
- * acquire() blocks if the pool is exhausted; connections are returned
- * automatically when the RAII ConnectionHandle goes out of scope.
- */
 class ConnectionPool {
 public:
     ConnectionPool(const std::string& conn_string, size_t pool_size);
@@ -24,9 +17,6 @@ public:
     ConnectionPool(const ConnectionPool&) = delete;
     ConnectionPool& operator=(const ConnectionPool&) = delete;
 
-    /**
-     * RAII handle — returns the connection to the pool on destruction.
-     */
     class ConnectionHandle {
     public:
         ConnectionHandle() : conn_(nullptr), pool_(nullptr) {}
@@ -48,14 +38,8 @@ public:
         ConnectionPool* pool_;
     };
 
-    /**
-     * Acquire a connection from the pool. Blocks if none available.
-     */
     ConnectionHandle acquire();
 
-    /**
-     * Acquire with a timeout. Returns an empty handle on timeout.
-     */
     ConnectionHandle acquire_with_timeout(std::chrono::milliseconds timeout);
 
     size_t available() const;

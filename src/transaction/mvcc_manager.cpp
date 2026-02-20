@@ -4,7 +4,6 @@
 MVCCManager::MVCCManager(std::chrono::seconds txn_timeout)
     : txn_timeout_(txn_timeout) {}
 
-// ── Transaction lifecycle ───────────────────────────────
 
 std::pair<uint64_t, uint64_t> MVCCManager::begin_transaction() {
     uint64_t txn_id = next_txn_id_.fetch_add(1, std::memory_order_seq_cst);
@@ -27,10 +26,9 @@ bool MVCCManager::commit_transaction(uint64_t txn_id) {
 
     auto it = active_transactions_.find(txn_id);
     if (it == active_transactions_.end()) {
-        return false;  // unknown or already-closed transaction
+        return false;
     }
 
-    // Reject if the transaction has exceeded its timeout window
     auto elapsed = std::chrono::steady_clock::now() - it->second.started_at;
     if (elapsed > txn_timeout_) {
         pinned_snapshots_.erase(it->second.read_snapshot_id);
@@ -38,8 +36,6 @@ bool MVCCManager::commit_transaction(uint64_t txn_id) {
         return false;
     }
 
-    // Generate new snapshot_id — monotonically advance the global pointer
-    // via a CAS loop to handle concurrent committers safely.
     uint64_t new_snapshot = latest_committed_snapshot_.load(std::memory_order_relaxed) + 1;
     uint64_t current = latest_committed_snapshot_.load(std::memory_order_relaxed);
     while (current < new_snapshot) {
@@ -49,11 +45,9 @@ bool MVCCManager::commit_transaction(uint64_t txn_id) {
                 std::memory_order_relaxed)) {
             break;
         }
-        // If another thread already advanced past our target, bump ours
         new_snapshot = current + 1;
     }
 
-    // Unpin the reader snapshot and remove from the active set
     pinned_snapshots_.erase(it->second.read_snapshot_id);
     active_transactions_.erase(it);
     return true;
@@ -68,12 +62,8 @@ void MVCCManager::abort_transaction(uint64_t txn_id) {
     }
 }
 
-// ── Visibility ──────────────────────────────────────────
-
 bool MVCCManager::is_visible(uint64_t write_snapshot_id,
                               uint64_t read_snapshot_id) const {
-    // A write is visible to a reader iff it was committed at or before
-    // the reader's snapshot.
     return write_snapshot_id <= read_snapshot_id;
 }
 
@@ -81,17 +71,12 @@ uint64_t MVCCManager::get_latest_committed_snapshot() const {
     return latest_committed_snapshot_.load(std::memory_order_acquire);
 }
 
-// ── Optimistic concurrency ──────────────────────────────
-
 bool MVCCManager::validate_parent_snapshot(const std::string& /*table_name*/,
                                             uint64_t parent_snapshot_id,
                                             uint64_t current_snapshot_id) const {
-    // The commit should fail if another writer already advanced the snapshot
-    // past what we read from.
     return parent_snapshot_id == current_snapshot_id;
 }
 
-// ── Maintenance ─────────────────────────────────────────
 
 size_t MVCCManager::cleanup_expired_transactions() {
     std::unique_lock lock(mutex_);

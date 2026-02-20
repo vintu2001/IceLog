@@ -11,7 +11,6 @@ struct ServerConfig {
     size_t      pool_size      = 20;
     int         txn_timeout_s  = 300;
 
-    // Load config from environment variables, falling back to defaults
     static ServerConfig from_env() {
         ServerConfig cfg;
 

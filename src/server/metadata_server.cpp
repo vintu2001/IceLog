@@ -1,7 +1,6 @@
 #include "metadata_server.h"
 #include <iostream>
 
-// ── Constructor ─────────────────────────────────────────
 
 MetadataServer::MetadataServer(const ServerConfig& config)
     : pg_pool_(std::make_unique<ConnectionPool>(config.pg_conn_string, config.pool_size)),
@@ -15,9 +14,6 @@ MetadataServer::MetadataServer(const ServerConfig& config)
               << ", cache=" << config.cache_capacity << ")\n";
 }
 
-// ═══════════════════════════════════════════════════════
-// TABLE OPERATIONS
-// ═══════════════════════════════════════════════════════
 
 grpc::Status MetadataServer::CreateTable(
     grpc::ServerContext* /*ctx*/,
@@ -26,7 +22,6 @@ grpc::Status MetadataServer::CreateTable(
 {
     std::string props = "{}";
     if (req->properties_size() > 0) {
-        // Serialize map to JSON — simple approach
         props = "{";
         bool first = true;
         for (const auto& [k, v] : req->properties()) {
@@ -52,21 +47,17 @@ grpc::Status MetadataServer::GetTableMetadata(
     const std::string& table_name = req->table_name();
     uint64_t requested_snapshot = req->snapshot_id();
 
-    // 1. Fetch table metadata
     auto table = catalog_->get_table(table_name);
     if (!table.has_value()) {
         return grpc::Status(grpc::NOT_FOUND, "Table not found: " + table_name);
     }
 
-    // 2. Resolve snapshot: 0 = latest committed
     uint64_t read_snapshot = (requested_snapshot == 0)
         ? mvcc_manager_.get_latest_committed_snapshot()
         : requested_snapshot;
 
-    // 3. Fetch partitions visible at this snapshot (cache-accelerated)
     auto parts = partitions_->get_partitions(table_name, read_snapshot);
 
-    // 4. Build response
     resp->set_table_name(table->table_name);
     resp->set_schema_json(table->schema_json);
     resp->set_current_snapshot_id(read_snapshot);
@@ -101,7 +92,6 @@ grpc::Status MetadataServer::AlterTable(
 
     switch (req->alteration_case()) {
         case metadata::AlterTableRequest::kNewSchemaJson: {
-            // Validate schema change
             auto current = schemas_->get_current_schema(table_name);
             if (current.has_value()) {
                 auto err = schemas_->validate_schema_change(
@@ -125,7 +115,6 @@ grpc::Status MetadataServer::AlterTable(
             break;
         }
         case metadata::AlterTableRequest::kNewPartitionSpec: {
-            // Repartitioning — for now just update the spec
             resp->set_success(true);
             resp->set_error_msg("partition spec update not yet implemented");
             break;
@@ -135,7 +124,6 @@ grpc::Status MetadataServer::AlterTable(
             resp->set_error_msg("No alteration specified");
     }
 
-    // Invalidate partition cache after DDL
     partitions_->invalidate_table_cache(table_name);
     return grpc::Status::OK;
 }
@@ -169,9 +157,6 @@ grpc::Status MetadataServer::ListTables(
     return grpc::Status::OK;
 }
 
-// ═══════════════════════════════════════════════════════
-// PARTITION OPERATIONS
-// ═══════════════════════════════════════════════════════
 
 grpc::Status MetadataServer::GetPartitions(
     grpc::ServerContext* /*ctx*/,
@@ -207,7 +192,6 @@ grpc::Status MetadataServer::GetPartitions(
 
     resp->set_total_count(static_cast<int64_t>(result->size()));
 
-    // Set next page token for pagination
     if (req->page_size() > 0 && !result->empty()) {
         resp->set_next_page_token(std::to_string(result->back().partition_id));
     }
@@ -228,16 +212,12 @@ grpc::Status MetadataServer::GetPartitionStats(
     return grpc::Status::OK;
 }
 
-// ═══════════════════════════════════════════════════════
-// SNAPSHOT OPERATIONS
-// ═══════════════════════════════════════════════════════
 
 grpc::Status MetadataServer::CommitSnapshot(
     grpc::ServerContext* /*ctx*/,
     const metadata::SnapshotRequest* req,
     metadata::SnapshotResponse* resp)
 {
-    // Convert protobuf partitions to internal rows
     std::vector<PartitionRow> new_parts;
     new_parts.reserve(req->new_partitions_size());
     for (const auto& p : req->new_partitions()) {
@@ -306,9 +286,6 @@ grpc::Status MetadataServer::ListSnapshots(
     return grpc::Status::OK;
 }
 
-// ═══════════════════════════════════════════════════════
-// TRANSACTION OPERATIONS
-// ═══════════════════════════════════════════════════════
 
 grpc::Status MetadataServer::BeginTransaction(
     grpc::ServerContext* /*ctx*/,
@@ -317,7 +294,6 @@ grpc::Status MetadataServer::BeginTransaction(
 {
     auto [txn_id, read_snapshot] = mvcc_manager_.begin_transaction();
 
-    // Persist to PostgreSQL for crash recovery
     auto conn = pg_pool_->acquire();
     std::string isolation = (req->isolation() == metadata::READ_COMMITTED)
         ? "read_committed" : "snapshot";

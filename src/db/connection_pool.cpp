@@ -1,7 +1,6 @@
 #include "connection_pool.h"
 #include <iostream>
 
-// ── ConnectionPool ──────────────────────────────────────
 
 ConnectionPool::ConnectionPool(const std::string& conn_string, size_t pool_size)
     : conn_string_(conn_string), pool_size_(pool_size)
@@ -52,7 +51,6 @@ ConnectionPool::ConnectionHandle ConnectionPool::acquire() {
     PGconn* conn = available_connections_.front();
     available_connections_.pop();
 
-    // Validate before handing out — replace dead connections
     if (!validate_connection(conn)) {
         PQfinish(conn);
         conn = create_connection();
@@ -69,7 +67,7 @@ ConnectionPool::ConnectionHandle ConnectionPool::acquire_with_timeout(
 {
     std::unique_lock lock(mutex_);
     if (!cv_.wait_for(lock, timeout, [this] { return !available_connections_.empty(); })) {
-        return ConnectionHandle();  // empty handle — timed out
+        return ConnectionHandle();
     }
 
     PGconn* conn = available_connections_.front();
@@ -95,7 +93,6 @@ size_t ConnectionPool::available() const {
     return available_connections_.size();
 }
 
-// ── ConnectionHandle ────────────────────────────────────
 
 ConnectionPool::ConnectionHandle::ConnectionHandle(PGconn* conn, ConnectionPool* pool)
     : conn_(conn), pool_(pool) {}

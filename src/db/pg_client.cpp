@@ -3,7 +3,6 @@
 #include <stdexcept>
 #include <iostream>
 
-// ── Helpers ─────────────────────────────────────────────
 
 std::string PgClient::field_str(PGresult* res, int row, int col) {
     if (PQgetisnull(res, row, col)) return "";
@@ -20,7 +19,6 @@ int32_t PgClient::field_int32(PGresult* res, int row, int col) {
     return std::stoi(PQgetvalue(res, row, col));
 }
 
-// ── Table ID lookup (shared helper) ─────────────────────
 
 int64_t PgClient::get_table_id(PGconn* conn, const std::string& table_name) {
     const char* params[] = { table_name.c_str() };
@@ -38,7 +36,6 @@ int64_t PgClient::get_table_id(PGconn* conn, const std::string& table_name) {
     return id;
 }
 
-// ── Table Operations ────────────────────────────────────
 
 bool PgClient::create_table(PGconn* conn, const std::string& table_name,
                              const std::string& schema_json,
@@ -95,7 +92,6 @@ bool PgClient::update_table_schema(PGconn* conn, const std::string& table_name,
                                     int32_t new_version,
                                     const std::string& change_summary)
 {
-    // Update the main table record
     std::string ver_str = std::to_string(new_version);
     const char* params1[] = { new_schema_json.c_str(), ver_str.c_str(), table_name.c_str() };
     PGresult* res = PQexecParams(conn,
@@ -107,7 +103,6 @@ bool PgClient::update_table_schema(PGconn* conn, const std::string& table_name,
     PQclear(res);
     if (!ok) return false;
 
-    // Record in schema_history
     int64_t table_id = get_table_id(conn, table_name);
     if (table_id < 0) return false;
 
@@ -142,7 +137,6 @@ bool PgClient::rename_table(PGconn* conn, const std::string& old_name,
 
 bool PgClient::drop_table(PGconn* conn, const std::string& table_name, bool purge) {
     if (purge) {
-        // Hard delete — remove metadata entirely
         int64_t table_id = get_table_id(conn, table_name);
         if (table_id < 0) return false;
 
@@ -160,7 +154,6 @@ bool PgClient::drop_table(PGconn* conn, const std::string& table_name, bool purg
         PQclear(res);
         return ok;
     } else {
-        // Soft delete
         const char* params[] = { table_name.c_str() };
         PGresult* res = PQexecParams(conn,
             "UPDATE tables SET is_deleted = true, updated_at = now() WHERE table_name = $1",
@@ -207,7 +200,6 @@ std::vector<TableRow> PgClient::list_tables(PGconn* conn, const std::string& /*n
     return rows;
 }
 
-// ── Partition Operations ────────────────────────────────
 
 std::optional<std::vector<PartitionRow>> PgClient::query_partitions(
     PGconn* conn, const std::string& table_name, uint64_t snapshot_id)
@@ -266,7 +258,6 @@ std::optional<std::vector<PartitionRow>> PgClient::query_partitions_paged(
 
     const char* params[] = { tid_str.c_str(), snap_str.c_str(), last_str.c_str(), limit_str.c_str() };
 
-    // Keyset pagination for O(1) paging instead of OFFSET
     PGresult* res = PQexecParams(conn,
         "SELECT partition_id, table_id, snapshot_id, partition_key, "
         "       data_file_path, file_format, row_count, size_bytes, column_stats::text "
@@ -351,7 +342,6 @@ bool PgClient::mark_partition_deleted(PGconn* conn, const std::string& table_nam
     return ok;
 }
 
-// ── Snapshot Operations ─────────────────────────────────
 
 uint64_t PgClient::insert_snapshot(PGconn* conn, const std::string& table_name,
                                     uint64_t parent_snapshot_id,
@@ -488,8 +478,6 @@ bool PgClient::update_table_snapshot(PGconn* conn, const std::string& table_name
     PQclear(res);
     return ok;
 }
-
-// ── Transaction Operations ──────────────────────────────
 
 uint64_t PgClient::insert_transaction(PGconn* conn, const std::string& client_id,
                                        uint64_t read_snapshot_id,

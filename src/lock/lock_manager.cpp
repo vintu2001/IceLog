@@ -43,7 +43,6 @@ bool LockManager::try_acquire_exclusive(const std::string& table_name,
     auto& mtx = get_or_create(table_name);
     auto deadline = std::chrono::steady_clock::now() + timeout;
 
-    // Spin with back-off since std::shared_mutex lacks try_lock_for
     while (std::chrono::steady_clock::now() < deadline) {
         if (mtx.try_lock()) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

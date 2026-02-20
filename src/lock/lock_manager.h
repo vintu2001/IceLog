@@ -8,35 +8,19 @@
 #include <chrono>
 #include <thread>
 
-/**
- * Per-table read/write lock manager for DDL serialization.
- *
- * - Shared (read) locks allow concurrent DML/reads on the same table.
- * - Exclusive (write) locks serialize DDL operations (ALTER, DROP, CommitSnapshot).
- *
- * Locks are created lazily on first access and stored as unique_ptr<shared_mutex>
- * because shared_mutex is non-movable (would break on unordered_map rehash).
- */
 class LockManager {
 public:
-    // ── Shared (read) lock ──────────────────────────
 
     void acquire_shared(const std::string& table_name);
     void release_shared(const std::string& table_name);
 
-    // ── Exclusive (write) lock ──────────────────────
 
     void acquire_exclusive(const std::string& table_name);
     void release_exclusive(const std::string& table_name);
 
-    /**
-     * Attempt to acquire an exclusive lock with a timeout.
-     * Returns false if the lock could not be acquired within the deadline.
-     */
     bool try_acquire_exclusive(const std::string& table_name,
                                 std::chrono::milliseconds timeout);
 
-    // ── RAII guards ─────────────────────────────────
 
     struct SharedGuard {
         LockManager& mgr;

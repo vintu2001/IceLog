@@ -10,21 +10,11 @@
 #include <optional>
 #include <cstdint>
 
-/**
- * Catalog Manager — the primary entry point for table CRUD operations.
- *
- * Coordinates between the lock manager (DDL serialization),
- * MVCC manager (snapshot tracking), and PostgreSQL (persistence).
- *
- * All DDL operations acquire an exclusive lock on the target table
- * to prevent concurrent schema modifications.
- */
 class CatalogManager {
 public:
     CatalogManager(ConnectionPool& pool, PgClient& pg,
                    LockManager& locks, MVCCManager& mvcc);
 
-    // ── Table CRUD ──────────────────────────────────
 
     struct CreateTableResult {
         bool success;

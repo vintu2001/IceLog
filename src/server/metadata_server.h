@@ -15,20 +15,10 @@
 
 #include <memory>
 
-/**
- * gRPC service implementation for the metadata control plane.
- *
- * Delegates each RPC to the appropriate domain manager:
- *   - Table ops    → CatalogManager
- *   - Partitions   → PartitionRegistry
- *   - Snapshots    → PartitionRegistry (commit) + PgClient (query)
- *   - Transactions → MVCCManager + PgClient
- */
 class MetadataServer final : public metadata::MetadataService::Service {
 public:
     explicit MetadataServer(const ServerConfig& config);
 
-    // ── Table Operations ────────────────────────────
 
     grpc::Status CreateTable(grpc::ServerContext* ctx,
                              const metadata::CreateTableRequest* req,
@@ -50,7 +40,6 @@ public:
                             const metadata::ListTablesRequest* req,
                             metadata::ListTablesResponse* resp) override;
 
-    // ── Partition Operations ────────────────────────
 
     grpc::Status GetPartitions(grpc::ServerContext* ctx,
                                const metadata::PartitionRequest* req,
@@ -60,7 +49,6 @@ public:
                                    const metadata::PartitionStatsRequest* req,
                                    metadata::PartitionStatsResponse* resp) override;
 
-    // ── Snapshot Operations ─────────────────────────
 
     grpc::Status CommitSnapshot(grpc::ServerContext* ctx,
                                 const metadata::SnapshotRequest* req,
@@ -74,7 +62,6 @@ public:
                                const metadata::ListSnapshotsRequest* req,
                                metadata::ListSnapshotsResponse* resp) override;
 
-    // ── Transaction Operations ──────────────────────
 
     grpc::Status BeginTransaction(grpc::ServerContext* ctx,
                                   const metadata::TransactionRequest* req,
@@ -89,13 +76,11 @@ public:
                                   metadata::OperationResponse* resp) override;
 
 private:
-    // Owned infrastructure
     std::unique_ptr<ConnectionPool> pg_pool_;
     PgClient         pg_client_;
     LockManager      lock_manager_;
     MVCCManager      mvcc_manager_;
 
-    // Domain managers
     std::unique_ptr<CatalogManager>    catalog_;
     std::unique_ptr<PartitionRegistry> partitions_;
     std::unique_ptr<SchemaStore>       schemas_;

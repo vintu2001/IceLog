@@ -16,7 +16,7 @@ std::optional<SchemaStore::SchemaVersion> SchemaStore::get_current_schema(
     return SchemaVersion{
         .version        = table->schema_version,
         .schema_json    = table->schema_json,
-        .changed_at     = "",  // current schema — use table's updated_at
+        .changed_at     = "",
         .change_summary = "current"
     };
 }
@@ -93,7 +93,6 @@ std::vector<SchemaStore::SchemaVersion> SchemaStore::list_schema_history(
 std::string SchemaStore::validate_schema_change(const std::string& current_json,
                                                  const std::string& proposed_json)
 {
-    // Basic validation: non-empty JSON
     if (proposed_json.empty() || proposed_json == "{}") {
         return "Proposed schema cannot be empty";
     }
@@ -101,11 +100,5 @@ std::string SchemaStore::validate_schema_change(const std::string& current_json,
         return "Proposed schema must be valid JSON object";
     }
 
-    // In a production system, this would parse both JSON schemas and check:
-    //   - No columns were narrowed (long → int)
-    //   - Required columns weren't removed
-    //   - Field IDs are preserved for renamed columns
-    // For now, accept all structurally valid changes.
-
-    return "";  // empty = valid
+    return "";
 }
