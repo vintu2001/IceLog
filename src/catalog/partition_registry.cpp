@@ -1,150 +1,156 @@
 #include "partition_registry.h"
 #include <iostream>
 
-PartitionRegistry::PartitionRegistry(ConnectionPool& pool, PgClient& pg,
-                                     LockManager& locks, MVCCManager& mvcc,
+PartitionRegistry::PartitionRegistry(ConnectionPool &pool, PgClient &pg,
+                                     LockManager &locks, MVCCManager &mvcc,
                                      size_t cache_capacity)
-    : pool_(pool), pg_(pg), locks_(locks), mvcc_(mvcc),
-      cache_(cache_capacity) {}
-
-
-std::optional<std::vector<PartitionRow>> PartitionRegistry::get_partitions(
-    const std::string& table_name,
-    uint64_t snapshot_id)
-{
-    auto guard = locks_.scoped_shared(table_name);
-
-    uint64_t read_snap = (snapshot_id == 0)
-        ? mvcc_.get_latest_committed_snapshot()
-        : snapshot_id;
-
-    std::string key = make_cache_key(table_name, read_snap);
-    if (auto cached = cache_.get(key)) {
-        return cached;
-    }
-
-    auto conn = pool_.acquire();
-    auto result = pg_.query_partitions(conn.get(), table_name, read_snap);
-    if (!result.has_value()) {
-        return std::nullopt;
-    }
-
-    cache_.put(key, *result);
-    return result;
+    : pool_(pool), pg_(pg), locks_(locks), mvcc_(mvcc), cache_(cache_capacity) {
 }
 
-std::optional<std::vector<PartitionRow>> PartitionRegistry::get_partitions_paged(
-    const std::string& table_name,
-    uint64_t snapshot_id,
-    int32_t page_size,
-    int64_t last_partition_id)
-{
-    auto guard = locks_.scoped_shared(table_name);
+std::optional<std::vector<PartitionRow>>
+PartitionRegistry::get_partitions(const std::string &table_name,
+                                  uint64_t snapshot_id) {
+  auto guard = locks_.scoped_shared(table_name);
 
-    uint64_t read_snap = (snapshot_id == 0)
-        ? mvcc_.get_latest_committed_snapshot()
-        : snapshot_id;
+  uint64_t read_snap =
+      (snapshot_id == 0) ? mvcc_.get_latest_committed_snapshot() : snapshot_id;
 
+  // If MVCC counter is still 0 (no in-memory commits), fall back to DB
+  if (read_snap == 0) {
     auto conn = pool_.acquire();
-    return pg_.query_partitions_paged(conn.get(), table_name, read_snap,
-                                      page_size, last_partition_id);
+    read_snap = pg_.get_current_snapshot(conn.get(), table_name);
+  }
+
+  std::string key = make_cache_key(table_name, read_snap);
+  if (auto cached = cache_.get(key)) {
+    return cached;
+  }
+
+  auto conn = pool_.acquire();
+  auto result = pg_.query_partitions(conn.get(), table_name, read_snap);
+  if (!result.has_value()) {
+    return std::nullopt;
+  }
+
+  cache_.put(key, *result);
+  return result;
 }
 
+std::optional<std::vector<PartitionRow>>
+PartitionRegistry::get_partitions_paged(const std::string &table_name,
+                                        uint64_t snapshot_id, int32_t page_size,
+                                        int64_t last_partition_id) {
+  auto guard = locks_.scoped_shared(table_name);
 
-PartitionRegistry::PartitionStats PartitionRegistry::get_stats(
-    const std::string& table_name)
-{
-    auto guard = locks_.scoped_shared(table_name);
-    uint64_t snap = mvcc_.get_latest_committed_snapshot();
+  uint64_t read_snap =
+      (snapshot_id == 0) ? mvcc_.get_latest_committed_snapshot() : snapshot_id;
 
-    auto conn = pool_.acquire();
-    auto parts = pg_.query_partitions(conn.get(), table_name, snap);
+  // If MVCC counter is still 0, fall back to DB
+  if (read_snap == 0) {
+    auto conn2 = pool_.acquire();
+    read_snap = pg_.get_current_snapshot(conn2.get(), table_name);
+  }
 
-    PartitionStats stats;
-    if (!parts.has_value()) return stats;
+  auto conn = pool_.acquire();
+  return pg_.query_partitions_paged(conn.get(), table_name, read_snap,
+                                    page_size, last_partition_id);
+}
 
-    stats.total_partitions = static_cast<int64_t>(parts->size());
-    for (const auto& p : *parts) {
-        stats.total_rows  += p.row_count;
-        stats.total_bytes += p.size_bytes;
-    }
-    if (stats.total_partitions > 0) {
-        stats.avg_size_bytes = stats.total_bytes / stats.total_partitions;
-    }
+PartitionRegistry::PartitionStats
+PartitionRegistry::get_stats(const std::string &table_name) {
+  auto guard = locks_.scoped_shared(table_name);
+  uint64_t snap = mvcc_.get_latest_committed_snapshot();
+
+  auto conn = pool_.acquire();
+
+  // If MVCC counter is still 0, fall back to DB
+  if (snap == 0) {
+    snap = pg_.get_current_snapshot(conn.get(), table_name);
+  }
+  auto parts = pg_.query_partitions(conn.get(), table_name, snap);
+
+  PartitionStats stats;
+  if (!parts.has_value())
     return stats;
-}
 
+  stats.total_partitions = static_cast<int64_t>(parts->size());
+  for (const auto &p : *parts) {
+    stats.total_rows += p.row_count;
+    stats.total_bytes += p.size_bytes;
+  }
+  if (stats.total_partitions > 0) {
+    stats.avg_size_bytes = stats.total_bytes / stats.total_partitions;
+  }
+  return stats;
+}
 
 PartitionRegistry::CommitResult PartitionRegistry::commit_snapshot(
-    const std::string& table_name,
-    uint64_t parent_snapshot_id,
-    const std::string& operation,
-    const std::vector<PartitionRow>& new_partitions,
-    const std::vector<std::string>& deleted_partition_keys)
-{
-    auto guard = locks_.scoped_exclusive(table_name);
+    const std::string &table_name, uint64_t parent_snapshot_id,
+    const std::string &operation,
+    const std::vector<PartitionRow> &new_partitions,
+    const std::vector<std::string> &deleted_partition_keys) {
+  auto guard = locks_.scoped_exclusive(table_name);
 
-    auto conn = pool_.acquire();
+  auto conn = pool_.acquire();
 
-    uint64_t current_snap = pg_.get_current_snapshot(conn.get(), table_name);
-    if (!mvcc_.validate_parent_snapshot(table_name, parent_snapshot_id, current_snap)) {
-        return {
-            false, 0,
+  uint64_t current_snap = pg_.get_current_snapshot(conn.get(), table_name);
+  if (!mvcc_.validate_parent_snapshot(table_name, parent_snapshot_id,
+                                      current_snap)) {
+    return {false, 0,
             "Conflict: snapshot " + std::to_string(parent_snapshot_id) +
-            " is no longer current (current=" + std::to_string(current_snap) + ")"
-        };
+                " is no longer current (current=" +
+                std::to_string(current_snap) + ")"};
+  }
+
+  PQexec(conn.get(), "BEGIN");
+
+  uint64_t new_snap =
+      pg_.insert_snapshot(conn.get(), table_name, parent_snapshot_id, operation,
+                          static_cast<int32_t>(new_partitions.size()),
+                          static_cast<int32_t>(deleted_partition_keys.size()));
+
+  if (new_snap == 0) {
+    PQexec(conn.get(), "ROLLBACK");
+    return {false, 0, "Failed to insert snapshot record"};
+  }
+
+  for (const auto &part : new_partitions) {
+    if (!pg_.insert_partition(conn.get(), table_name, new_snap, part)) {
+      PQexec(conn.get(), "ROLLBACK");
+      return {false, 0, "Failed to insert partition: " + part.partition_key};
     }
+  }
 
-    PQexec(conn.get(), "BEGIN");
-
-    uint64_t new_snap = pg_.insert_snapshot(
-        conn.get(), table_name, parent_snapshot_id, operation,
-        static_cast<int32_t>(new_partitions.size()),
-        static_cast<int32_t>(deleted_partition_keys.size()));
-
-    if (new_snap == 0) {
-        PQexec(conn.get(), "ROLLBACK");
-        return {false, 0, "Failed to insert snapshot record"};
+  for (const auto &key : deleted_partition_keys) {
+    if (!pg_.mark_partition_deleted(conn.get(), table_name, key, new_snap)) {
+      PQexec(conn.get(), "ROLLBACK");
+      return {false, 0, "Failed to mark partition deleted: " + key};
     }
+  }
 
-    for (const auto& part : new_partitions) {
-        if (!pg_.insert_partition(conn.get(), table_name, new_snap, part)) {
-            PQexec(conn.get(), "ROLLBACK");
-            return {false, 0, "Failed to insert partition: " + part.partition_key};
-        }
-    }
+  if (!pg_.update_table_snapshot(conn.get(), table_name, new_snap)) {
+    PQexec(conn.get(), "ROLLBACK");
+    return {false, 0, "Failed to update table snapshot pointer"};
+  }
 
-    for (const auto& key : deleted_partition_keys) {
-        if (!pg_.mark_partition_deleted(conn.get(), table_name, key, new_snap)) {
-            PQexec(conn.get(), "ROLLBACK");
-            return {false, 0, "Failed to mark partition deleted: " + key};
-        }
-    }
+  PQexec(conn.get(), "COMMIT");
 
-    if (!pg_.update_table_snapshot(conn.get(), table_name, new_snap)) {
-        PQexec(conn.get(), "ROLLBACK");
-        return {false, 0, "Failed to update table snapshot pointer"};
-    }
+  invalidate_table_cache(table_name);
 
-    PQexec(conn.get(), "COMMIT");
+  std::cout << "[PartitionRegistry] committed snapshot " << new_snap << " for "
+            << table_name << " (+" << new_partitions.size() << " partitions, -"
+            << deleted_partition_keys.size() << " deleted)\n";
 
-    invalidate_table_cache(table_name);
-
-    std::cout << "[PartitionRegistry] committed snapshot " << new_snap
-              << " for " << table_name << " (+" << new_partitions.size()
-              << " partitions, -" << deleted_partition_keys.size() << " deleted)\n";
-
-    return {true, new_snap, ""};
+  return {true, new_snap, ""};
 }
 
-
-void PartitionRegistry::invalidate_table_cache(const std::string& table_name) {
-    std::string prefix = table_name + ":";
-    size_t removed = cache_.invalidate_if([&prefix](const std::string& key) {
-        return key.compare(0, prefix.size(), prefix) == 0;
-    });
-    if (removed > 0) {
-        std::cout << "[PartitionRegistry] invalidated " << removed
-                  << " cache entries for " << table_name << "\n";
-    }
+void PartitionRegistry::invalidate_table_cache(const std::string &table_name) {
+  std::string prefix = table_name + ":";
+  size_t removed = cache_.invalidate_if([&prefix](const std::string &key) {
+    return key.compare(0, prefix.size(), prefix) == 0;
+  });
+  if (removed > 0) {
+    std::cout << "[PartitionRegistry] invalidated " << removed
+              << " cache entries for " << table_name << "\n";
+  }
 }

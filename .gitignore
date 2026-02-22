@@ -10,6 +10,7 @@ cmake-build-*/
 generated/
 
 # IDE
+.cache/
 .vscode/
 .idea/
 *.swp
